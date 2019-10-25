@@ -20,12 +20,14 @@ repositories {
 
 dependencies {
 	implementation 'org.springframework.boot:spring-boot-starter-actuator'
-	implementation 'org.springframework.boot:spring-boot-starter-web'
+//	implementation 'org.springframework.boot:spring-boot-starter-web'
 
 	compile 'org.rocksdb:rocksdbjni:5.5.1'
 	compile 'org.xerial:sqlite-jdbc:3.28.0'
 
 	compile 'com.google.guava:guava:23.0'
+
+	compile 'de.vandermeer:asciitable:0.3.2'
 
 	compileOnly 'org.projectlombok:lombok'
 	annotationProcessor 'org.projectlombok:lombok'

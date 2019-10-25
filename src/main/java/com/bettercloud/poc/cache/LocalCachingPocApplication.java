@@ -2,6 +2,7 @@ package com.bettercloud.poc.cache;
 
 import com.google.common.collect.Lists;
 import com.google.common.collect.Maps;
+import de.vandermeer.asciitable.AsciiTable;
 import lombok.Data;
 import org.rocksdb.Options;
 import org.rocksdb.RocksDB;
@@ -17,6 +18,7 @@ import java.nio.charset.Charset;
 import java.sql.*;
 import java.util.*;
 import java.util.Date;
+import java.util.function.Supplier;
 import java.util.stream.Collectors;
 import java.util.stream.IntStream;
 import java.util.stream.Stream;
@@ -180,7 +182,7 @@ public class LocalCachingPocApplication {
 
 	@Bean
 	public Store sqliteStore(Connection conn) throws SQLException {
-		conn.createStatement().execute("DROP TABLE KV");
+		conn.createStatement().execute("DROP TABLE IF EXISTS KV");
 		conn.createStatement().execute("CREATE TABLE IF NOT EXISTS KV (k varchar NOT NULL PRIMARY KEY, v varchar)");
 		return new Store() {
 			@Override
@@ -265,17 +267,29 @@ public class LocalCachingPocApplication {
 		return new Date().getTime();
 	}
 
+	public AsciiTable getPerfTable(String context) {
+		final AsciiTable table = new AsciiTable();
+		table.addRule();
+		table.addRow(context, "Count", "Duration (ms)", "Rate (rows/sec)");
+		table.addRule();
+		return table;
+	}
+
 	@Bean
 	public CommandLineRunner demo(List<Store> stores) {
 		return args -> {
-			final int maxIterations = 100000;
+			final int maxIterations = 1000000;
 			final int pageSize = 50;
+			final AsciiTable table = getPerfTable("Backing");
 
-			for (Store store : stores) {
+			for (int index = 0; index < stores.size(); index++) {
+				Store store = stores.get(index);
 				int iters = store.constrainIterations(maxIterations);
-				System.out.println(String.format("%s (%,d)", store.getKind(), iters));
+				int totalOperations = iters * 4;
+				AsciiTable storeTable = getPerfTable("Operation");
+				System.out.println(String.format("%s (%,d ops)", store.getKind(), totalOperations));
 
-				Timer totalTimer = new Timer(store.getKind(), iters * 4);
+				Timer totalTimer = new Timer(store.getKind(), totalOperations);
 				Timer writeTimer = new Timer("Writes", iters);
 
 				for (int i = 0; i < iters; i++) {
@@ -284,16 +298,18 @@ public class LocalCachingPocApplication {
 							getKey(i + 1000)
 					);
 				}
-				System.out.println(writeTimer.stop());
+//				System.out.println(writeTimer.stop());
+				writeTimer.stop(storeTable);
 
 				Timer readTimer = new Timer("Reads", iters);
 				for (int i = 0; i < iters; i++) {
 					String value = store.get(getKey(i));
 					assert(getKey(i + 1000).equals(value));
 				}
-				System.out.println(readTimer.stop());
+//				System.out.println(readTimer.stop());
+				readTimer.stop(storeTable);
 
-				Timer scanTimer = new Timer("Scan", iters);
+				Timer scanTimer = new Timer("Scan @" + pageSize, iters);
 				boolean hasMore = true;
 				String cursor = null;
 				List<Entry> items;
@@ -306,17 +322,22 @@ public class LocalCachingPocApplication {
 						cursor = items.get(items.size() - 1).getKey();
 					}
 				}
-				System.out.println(scanTimer.stop());
+//				System.out.println(scanTimer.stop());
+				scanTimer.stop(storeTable);
 				assert(count == iters);
 
 				Timer deleteTimer = new Timer("Deletes", iters);
 				for (int i = 0; i < iters; i++) {
 					store.delete(getKey(i));
 				}
-				System.out.println(deleteTimer.stop());
-				System.out.println(totalTimer.stop());
+//				System.out.println(deleteTimer.stop());
+				deleteTimer.stop(storeTable);
+//				System.out.println(totalTimer.stop());
+				totalTimer.stop(table);
+				System.out.println(storeTable.render());
 			}
-
+			System.out.println("Total Performance");
+			System.out.println(table.render());
 		};
 	}
 
@@ -358,23 +379,42 @@ public class LocalCachingPocApplication {
 			this.count = count;
 		}
 
+		public String stop(AsciiTable table) {
+			String str = this.stop();
+			this.append(table);
+			return str;
+		}
+
 		public String stop() {
 			this.endTime = now();
 			return this.toString();
 		}
 
-		public long duration() {
+		public long getDuration() {
 			return Optional.ofNullable(this.endTime).orElseGet(() -> now()) - this.startTime;
 		}
 
-		public double rate() {
-			return count * 1000.0 / duration();
+		public double getRate() {
+			return count * 1000.0 / getDuration();
 		}
 
 		@Override
 		public String toString() {
 			return String.format("\t%s: %,d duration: %,d ms rate: %,.2f ops/sec",
-					context, count, duration(), rate());
+					context, count, getDuration(), getRate());
+		}
+
+		public String f(long num) {
+			return String.format("%,d", num);
+		}
+
+		public String f(double num) {
+			return String.format("%,.2f", num);
+		}
+
+		public void append(AsciiTable table) {
+			table.addRow(context, f(count), f(getDuration()), f(getRate()));
+			table.addRule();
 		}
 	}
 }
